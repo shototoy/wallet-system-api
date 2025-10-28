@@ -30,22 +30,35 @@ export async function initDB() {
   }
 }
 
+async function dropWalletTables(connection) {
+  try {
+    await connection.execute(`DROP TABLE IF EXISTS transaction_fees`);
+    await connection.execute(`DROP TABLE IF EXISTS transactions`);
+    await connection.execute(`DROP TABLE IF EXISTS wallets`);
+    await connection.execute(`DROP TABLE IF EXISTS wallet_users`);
+    console.log('✓ Wallet tables dropped');
+  } catch (error) {
+    console.error('✗ Error dropping wallet tables:', error.message);
+    throw error;
+  }
+}
+
+
 async function createWalletTables(connection) {
   try {
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS wallet_users (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        username VARCHAR(11) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL,
+        employee_id VARCHAR(11) UNIQUE NOT NULL,
+        pin VARCHAR(255) NOT NULL,
         name VARCHAR(255) NOT NULL,
         phone VARCHAR(50),
-        email VARCHAR(255),
         staff_id VARCHAR(50) DEFAULT NULL,
         status ENUM('active', 'inactive', 'suspended') DEFAULT 'active',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         last_login TIMESTAMP NULL,
-        INDEX idx_username (username),
+        INDEX idx_employee_id (employee_id),
         INDEX idx_staff_id (staff_id),
         INDEX idx_status (status)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
@@ -56,7 +69,6 @@ async function createWalletTables(connection) {
         user_id INT UNIQUE NOT NULL,
         balance DECIMAL(12,2) DEFAULT 0.00,
         currency VARCHAR(3) DEFAULT 'PHP',
-        pin VARCHAR(255) DEFAULT NULL,
         status ENUM('active', 'frozen', 'closed') DEFAULT 'active',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
