@@ -1,0 +1,9 @@
+// ============================================
+// FILE 3: .gitignore
+// ============================================
+node_modules/
+.env
+.env.local
+.env.production
+*.log
+.DS_Store
