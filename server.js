@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-console.log('🚀 Initializing Employee Wallet System...');
+console.log('🚀 Initializing Wallet System...');
 await initDB();
 console.log('✓ Database initialized');
 
@@ -47,36 +47,66 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+app.post('/api/register', async (req, res) => {
+  try {
+    const { username, password, name, phone, email, staff_id } = req.body;
+    if (!username || !password || !name) {
+      return res.status(400).json({ error: 'Username, password, and name are required' });
+    }
+    if (username.length !== 11 || !/^\d{11}$/.test(username)) {
+      return res.status(400).json({ error: 'Username must be 11 digits' });
+    }
+    const db = getDB();
+    const [existing] = await db.execute('SELECT id FROM wallet_users WHERE username = ?', [username]);
+    if (existing.length > 0) {
+      return res.status(400).json({ error: 'Username already exists' });
+    }
+    const hash = await bcrypt.hash(password, 10);
+    const [result] = await db.execute(
+      'INSERT INTO wallet_users (username, password, name, phone, email, staff_id) VALUES (?, ?, ?, ?, ?, ?)',
+      [username, hash, name, phone, email, staff_id]
+    );
+    await db.execute('INSERT INTO wallets (user_id, balance) VALUES (?, ?)', [result.insertId, 0.00]);
+    console.log(`✓ New user registered: ${username} - ${name}`);
+    res.json({ success: true, message: 'Registration successful' });
+  } catch (e) {
+    console.error('✗ Registration error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/login', async (req, res) => {
   try {
-    const { employeeId, password } = req.body;
+    const { username, password } = req.body;
     const db = getDB();
-    const [rows] = await db.execute('SELECT * FROM staff WHERE id = ? AND role != ?', [employeeId, 'admin']);
+    const [rows] = await db.execute('SELECT * FROM wallet_users WHERE username = ? AND status = ?', [username, 'active']);
     if (rows.length === 0) {
-      console.log('✗ Login failed: Employee ID not found -', employeeId);
+      console.log('✗ Login failed: Username not found -', username);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
     const user = rows[0];
     const valid = await bcrypt.compare(password, user.password);
     if (!valid) {
-      console.log('✗ Login failed: Invalid password -', employeeId);
+      console.log('✗ Login failed: Invalid password -', username);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
-    let [wallet] = await db.execute('SELECT * FROM wallets WHERE staff_id = ?', [user.id]);
+    let [wallet] = await db.execute('SELECT * FROM wallets WHERE user_id = ?', [user.id]);
     if (wallet.length === 0) {
-      await db.execute('INSERT INTO wallets (staff_id, balance) VALUES (?, ?)', [user.id, 50000.00]);
-      console.log(`✓ Wallet created for ${user.name} with initial balance ₱50,000`);
+      await db.execute('INSERT INTO wallets (user_id, balance) VALUES (?, ?)', [user.id, 0.00]);
+      console.log(`✓ Wallet created for ${user.name}`);
     }
-    const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
-    console.log(`✓ Login successful: ${employeeId} - ${user.name}`);
+    await db.execute('UPDATE wallet_users SET last_login = NOW() WHERE id = ?', [user.id]);
+    const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '24h' });
+    console.log(`✓ Login successful: ${username} - ${user.name}`);
     res.json({ 
       token, 
       user: { 
         id: user.id, 
         name: user.name, 
         username: user.username,
-        department: user.department, 
-        position: user.position 
+        phone: user.phone,
+        email: user.email,
+        staff_id: user.staff_id
       } 
     });
   } catch (e) {
@@ -87,18 +117,17 @@ app.post('/api/login', async (req, res) => {
 
 app.get('/api/wallet/balance', auth, async (req, res) => {
   try {
-    const employeeId = req.user.id;
+    const userId = req.user.id;
     const db = getDB();
-    const [wallet] = await db.execute('SELECT balance, currency FROM wallets WHERE staff_id = ?', [employeeId]);
+    const [wallet] = await db.execute('SELECT balance, currency, status FROM wallets WHERE user_id = ?', [userId]);
     if (wallet.length === 0) {
-      await db.execute('INSERT INTO wallets (staff_id, balance) VALUES (?, ?)', [employeeId, 50000.00]);
-      console.log(`✓ Wallet created for employee ${employeeId}`);
-      return res.json({ balance: 50000.00, currency: 'PHP' });
+      return res.status(404).json({ error: 'Wallet not found' });
     }
-    console.log(`✓ Balance retrieved: ${employeeId} - ₱${wallet[0].balance.toLocaleString()}`);
+    console.log(`✓ Balance retrieved: User ${userId} - ₱${wallet[0].balance.toLocaleString()}`);
     res.json({ 
       balance: parseFloat(wallet[0].balance),
-      currency: wallet[0].currency
+      currency: wallet[0].currency,
+      status: wallet[0].status
     });
   } catch (e) {
     console.error('✗ Error retrieving balance:', e.message);
@@ -108,33 +137,37 @@ app.get('/api/wallet/balance', auth, async (req, res) => {
 
 app.get('/api/wallet/transactions', auth, async (req, res) => {
   try {
-    const employeeId = req.user.id;
+    const userId = req.user.id;
     const db = getDB();
     const [transactions] = await db.execute(`
       SELECT 
         t.*,
-        s1.name as from_name,
-        s2.name as to_name
+        u1.name as from_name,
+        u1.username as from_username,
+        u2.name as to_name,
+        u2.username as to_username
       FROM transactions t
-      LEFT JOIN staff s1 ON t.from_staff_id = s1.id
-      LEFT JOIN staff s2 ON t.to_staff_id = s2.id
-      WHERE t.from_staff_id = ? OR t.to_staff_id = ?
+      LEFT JOIN wallet_users u1 ON t.from_user_id = u1.id
+      LEFT JOIN wallet_users u2 ON t.to_user_id = u2.id
+      WHERE t.from_user_id = ? OR t.to_user_id = ?
       ORDER BY t.created_at DESC
       LIMIT 50
-    `, [employeeId, employeeId]);
+    `, [userId, userId]);
     const formattedTransactions = transactions.map(tx => ({
       id: tx.id,
-      type: tx.from_staff_id === employeeId ? 'sent' : 'received',
+      type: tx.from_user_id === userId ? 'sent' : 'received',
       amount: parseFloat(tx.amount),
       currency: 'PHP',
       from: tx.from_name || 'System',
+      from_username: tx.from_username || '',
       to: tx.to_name || 'System',
-      description: tx.description || (tx.from_staff_id === employeeId ? `Sent to ${tx.to_name}` : `Received from ${tx.from_name}`),
+      to_username: tx.to_username || '',
+      description: tx.description || (tx.from_user_id === userId ? `Sent to ${tx.to_name}` : `Received from ${tx.from_name}`),
       status: tx.status,
       reference: tx.reference,
       created_at: tx.created_at
     }));
-    console.log(`✓ Transactions retrieved: ${employeeId} - ${formattedTransactions.length} records`);
+    console.log(`✓ Transactions retrieved: ${userId} - ${formattedTransactions.length} records`);
     res.json({ transactions: formattedTransactions });
   } catch (e) {
     console.error('✗ Error retrieving transactions:', e.message);
@@ -145,29 +178,33 @@ app.get('/api/wallet/transactions', auth, async (req, res) => {
 app.get('/api/wallet/transactions/:id', auth, async (req, res) => {
   try {
     const { id } = req.params;
-    const employeeId = req.user.id;
+    const userId = req.user.id;
     const db = getDB();
     const [transactions] = await db.execute(`
       SELECT 
         t.*,
-        s1.name as from_name,
-        s2.name as to_name
+        u1.name as from_name,
+        u1.username as from_username,
+        u2.name as to_name,
+        u2.username as to_username
       FROM transactions t
-      LEFT JOIN staff s1 ON t.from_staff_id = s1.id
-      LEFT JOIN staff s2 ON t.to_staff_id = s2.id
-      WHERE t.id = ? AND (t.from_staff_id = ? OR t.to_staff_id = ?)
-    `, [id, employeeId, employeeId]);
+      LEFT JOIN wallet_users u1 ON t.from_user_id = u1.id
+      LEFT JOIN wallet_users u2 ON t.to_user_id = u2.id
+      WHERE t.id = ? AND (t.from_user_id = ? OR t.to_user_id = ?)
+    `, [id, userId, userId]);
     if (transactions.length === 0) {
       return res.status(404).json({ error: 'Transaction not found' });
     }
     const tx = transactions[0];
     const formattedTransaction = {
       id: tx.id,
-      type: tx.from_staff_id === employeeId ? 'sent' : 'received',
+      type: tx.from_user_id === userId ? 'sent' : 'received',
       amount: parseFloat(tx.amount),
       currency: 'PHP',
       from: tx.from_name || 'System',
+      from_username: tx.from_username || '',
       to: tx.to_name || 'System',
+      to_username: tx.to_username || '',
       description: tx.description,
       status: tx.status,
       reference: tx.reference,
@@ -184,43 +221,53 @@ app.get('/api/wallet/transactions/:id', auth, async (req, res) => {
 app.post('/api/wallet/transfer', auth, async (req, res) => {
   const connection = await getDB().getConnection();
   try {
-    const { recipientId, amount, pin } = req.body;
+    const { recipientUsername, amount, pin } = req.body;
     const senderId = req.user.id;
-    if (!recipientId || !amount) {
-      return res.status(400).json({ error: 'Recipient ID and amount are required' });
+    if (!recipientUsername || !amount) {
+      return res.status(400).json({ error: 'Recipient username and amount are required' });
     }
     if (amount <= 0) {
       return res.status(400).json({ error: 'Amount must be greater than 0' });
     }
-    if (senderId === recipientId) {
-      return res.status(400).json({ error: 'Cannot transfer to yourself' });
-    }
     await connection.beginTransaction();
-    const [recipient] = await connection.execute('SELECT name FROM staff WHERE id = ? AND role != ?', [recipientId, 'admin']);
+    const [recipient] = await connection.execute('SELECT id, name, username FROM wallet_users WHERE username = ? AND status = ?', [recipientUsername, 'active']);
     if (recipient.length === 0) {
       await connection.rollback();
-      console.log('✗ Transfer failed: Recipient not found -', recipientId);
+      console.log('✗ Transfer failed: Recipient not found -', recipientUsername);
       return res.status(404).json({ error: 'Recipient not found' });
     }
-    const [senderWallet] = await connection.execute('SELECT balance FROM wallets WHERE staff_id = ? FOR UPDATE', [senderId]);
-    if (senderWallet.length === 0 || parseFloat(senderWallet[0].balance) < amount) {
+    const recipientId = recipient[0].id;
+    if (senderId === recipientId) {
+      await connection.rollback();
+      return res.status(400).json({ error: 'Cannot transfer to yourself' });
+    }
+    const [senderWallet] = await connection.execute('SELECT balance, status FROM wallets WHERE user_id = ? FOR UPDATE', [senderId]);
+    if (senderWallet.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ error: 'Sender wallet not found' });
+    }
+    if (senderWallet[0].status !== 'active') {
+      await connection.rollback();
+      return res.status(400).json({ error: 'Wallet is not active' });
+    }
+    if (parseFloat(senderWallet[0].balance) < amount) {
       await connection.rollback();
       console.log('✗ Transfer failed: Insufficient balance -', senderId);
       return res.status(400).json({ error: 'Insufficient balance' });
     }
-    let [recipientWallet] = await connection.execute('SELECT id FROM wallets WHERE staff_id = ?', [recipientId]);
+    let [recipientWallet] = await connection.execute('SELECT id FROM wallets WHERE user_id = ?', [recipientId]);
     if (recipientWallet.length === 0) {
-      await connection.execute('INSERT INTO wallets (staff_id, balance) VALUES (?, ?)', [recipientId, 0]);
+      await connection.execute('INSERT INTO wallets (user_id, balance) VALUES (?, ?)', [recipientId, 0]);
     }
-    await connection.execute('UPDATE wallets SET balance = balance - ? WHERE staff_id = ?', [amount, senderId]);
-    await connection.execute('UPDATE wallets SET balance = balance + ? WHERE staff_id = ?', [amount, recipientId]);
+    await connection.execute('UPDATE wallets SET balance = balance - ?, updated_at = NOW() WHERE user_id = ?', [amount, senderId]);
+    await connection.execute('UPDATE wallets SET balance = balance + ?, updated_at = NOW() WHERE user_id = ?', [amount, recipientId]);
     const reference = generateReference();
     await connection.execute(
-      'INSERT INTO transactions (from_staff_id, to_staff_id, amount, type, status, reference, description) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO transactions (from_user_id, to_user_id, amount, type, status, reference, description) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [senderId, recipientId, amount, 'transfer', 'completed', reference, `Transfer to ${recipient[0].name}`]
     );
     await connection.commit();
-    const [sender] = await connection.execute('SELECT name FROM staff WHERE id = ?', [senderId]);
+    const [sender] = await connection.execute('SELECT name FROM wallet_users WHERE id = ?', [senderId]);
     console.log(`✓ Transfer successful: ${sender[0].name} → ${recipient[0].name} - ₱${amount.toLocaleString()}`);
     res.json({ 
       success: true,
@@ -232,6 +279,7 @@ app.post('/api/wallet/transfer', auth, async (req, res) => {
         currency: 'PHP',
         from: sender[0].name,
         to: recipient[0].name,
+        to_username: recipient[0].username,
         status: 'completed',
         created_at: new Date().toISOString()
       }
@@ -248,18 +296,18 @@ app.post('/api/wallet/transfer', auth, async (req, res) => {
 app.get('/api/wallet/search', auth, async (req, res) => {
   try {
     const { q } = req.query;
-    const employeeId = req.user.id;
+    const userId = req.user.id;
     if (!q || q.trim().length < 2) {
-      return res.json({ employees: [] });
+      return res.json({ users: [] });
     }
     const db = getDB();
     const searchTerm = `%${q}%`;
-    const [employees] = await db.execute(
-      'SELECT id, name, department, position FROM staff WHERE (name LIKE ? OR id LIKE ?) AND id != ? AND role != ? LIMIT 10',
-      [searchTerm, searchTerm, employeeId, 'admin']
+    const [users] = await db.execute(
+      'SELECT id, username, name, phone FROM wallet_users WHERE (name LIKE ? OR username LIKE ?) AND id != ? AND status = ? LIMIT 10',
+      [searchTerm, searchTerm, userId, 'active']
     );
-    console.log(`✓ Employee search: "${q}" - ${employees.length} results`);
-    res.json({ employees });
+    console.log(`✓ User search: "${q}" - ${users.length} results`);
+    res.json({ users });
   } catch (e) {
     console.error('✗ Search error:', e.message);
     res.status(500).json({ error: e.message });
@@ -268,7 +316,7 @@ app.get('/api/wallet/search', auth, async (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   const localIP = getLocalIP();
-  console.log('\n💰 Employee Wallet System Ready');
+  console.log('\n💰 Wallet System Ready');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log(`📍 Local:   http://localhost:${PORT}`);
   console.log(`📍 Network: http://${localIP}:${PORT}`);

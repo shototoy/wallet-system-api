@@ -31,41 +31,71 @@ export async function initDB() {
 }
 
 async function createWalletTables(connection) {
-      try {
-        await connection.execute(`
-          CREATE TABLE IF NOT EXISTS wallets (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            staff_id VARCHAR(50) UNIQUE NOT NULL,
-            balance DECIMAL(12,2) DEFAULT 0.00,
-            currency VARCHAR(3) DEFAULT 'PHP',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            FOREIGN KEY (staff_id) REFERENCES staff(id) ON DELETE CASCADE,
-            INDEX idx_staff_id (staff_id)
-          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
-        `);
-
-        await connection.execute(`
-          CREATE TABLE IF NOT EXISTS transactions (
-            id INT PRIMARY KEY AUTO_INCREMENT,
-            from_staff_id VARCHAR(50),
-            to_staff_id VARCHAR(50),
-            amount DECIMAL(12,2) NOT NULL,
-            type ENUM('transfer', 'topup', 'payment', 'refund') DEFAULT 'transfer',
-            status ENUM('pending', 'completed', 'failed', 'cancelled') DEFAULT 'completed',
-            description TEXT,
-            reference VARCHAR(50) UNIQUE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (from_staff_id) REFERENCES staff(id) ON DELETE SET NULL,
-            FOREIGN KEY (to_staff_id) REFERENCES staff(id) ON DELETE SET NULL,
-            INDEX idx_from_staff (from_staff_id),
-            INDEX idx_to_staff (to_staff_id),
-            INDEX idx_created_at (created_at),
-            INDEX idx_reference (reference)
-          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
-        `);
-
-
+  try {
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS wallet_users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        username VARCHAR(11) UNIQUE NOT NULL,
+        password VARCHAR(255) NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        phone VARCHAR(50),
+        email VARCHAR(255),
+        staff_id VARCHAR(50) DEFAULT NULL,
+        status ENUM('active', 'inactive', 'suspended') DEFAULT 'active',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        last_login TIMESTAMP NULL,
+        INDEX idx_username (username),
+        INDEX idx_staff_id (staff_id),
+        INDEX idx_status (status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    `);
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS wallets (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT UNIQUE NOT NULL,
+        balance DECIMAL(12,2) DEFAULT 0.00,
+        currency VARCHAR(3) DEFAULT 'PHP',
+        pin VARCHAR(255) DEFAULT NULL,
+        status ENUM('active', 'frozen', 'closed') DEFAULT 'active',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES wallet_users(id) ON DELETE CASCADE,
+        INDEX idx_user_id (user_id),
+        INDEX idx_status (status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    `);
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS transactions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        from_user_id INT,
+        to_user_id INT,
+        amount DECIMAL(12,2) NOT NULL,
+        type ENUM('transfer', 'topup', 'payment', 'refund', 'cashout') DEFAULT 'transfer',
+        status ENUM('pending', 'completed', 'failed', 'cancelled') DEFAULT 'completed',
+        description TEXT,
+        reference VARCHAR(50) UNIQUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (from_user_id) REFERENCES wallet_users(id) ON DELETE SET NULL,
+        FOREIGN KEY (to_user_id) REFERENCES wallet_users(id) ON DELETE SET NULL,
+        INDEX idx_from_user (from_user_id),
+        INDEX idx_to_user (to_user_id),
+        INDEX idx_created_at (created_at),
+        INDEX idx_reference (reference),
+        INDEX idx_status (status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    `);
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS transaction_fees (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        transaction_id INT NOT NULL,
+        fee_amount DECIMAL(12,2) NOT NULL,
+        fee_type ENUM('transfer', 'cashout', 'payment') NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE CASCADE,
+        INDEX idx_transaction_id (transaction_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    `);
     console.log('✓ Wallet tables verified/created');
   } catch (error) {
     console.error('✗ Error creating wallet tables:', error.message);
