@@ -233,7 +233,6 @@ app.get('/api/wallet/search', auth, async (req, res) => {
     }
     const db = getDB();
     const searchTerm = `%${q}%`;
-    // Fixed: Removed 'username' column since it doesn't exist in the schema
     const [users] = await db.execute(
       'SELECT id, name, phone FROM wallet_users WHERE (name LIKE ? OR phone LIKE ?) AND id != ? AND status = ? LIMIT 10',
       [searchTerm, searchTerm, userId, 'active']
@@ -249,41 +248,54 @@ app.get('/api/wallet/search', auth, async (req, res) => {
 app.post('/api/wallet/transfer', auth, async (req, res) => {
   const connection = await getDB().getConnection();
   try {
-    const { recipientId, recipientUsername, amount, pin } = req.body;
-    const recipientPhone = recipientId || recipientUsername;
+    const { recipientId, amount, pin } = req.body;
+    const recipientPhone = recipientId;
     const senderId = req.user.id;
-    
     if (!recipientPhone || !amount) {
-      return res.status(400).json({ error: 'Recipient and amount are required' });
+      return res.status(400).json({ error: 'Recipient phone and amount are required' });
     }
     if (amount <= 0) {
       return res.status(400).json({ error: 'Amount must be greater than 0' });
     }
-    
+    if (!pin || pin.length !== 6) {
+      return res.status(400).json({ error: 'Valid 6-digit PIN is required' });
+    }
+    if (!/^\d{11}$/.test(recipientPhone)) {
+      return res.status(400).json({ error: 'Invalid phone number format' });
+    }
     await connection.beginTransaction();
-    
+    const [senderUser] = await connection.execute(
+      'SELECT pin FROM wallet_users WHERE id = ?',
+      [senderId]
+    );
+    if (senderUser.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const pinValid = await bcrypt.compare(pin, senderUser[0].pin);
+    if (!pinValid) {
+      await connection.rollback();
+      console.log('✗ Transfer failed: Invalid PIN -', senderId);
+      return res.status(401).json({ error: 'Invalid PIN' });
+    }
     const [recipient] = await connection.execute(
       'SELECT id, name FROM wallet_users WHERE phone = ? AND status = ?', 
       [recipientPhone, 'active']
     );
-    
     if (recipient.length === 0) {
       await connection.rollback();
       console.log('✗ Transfer failed: Recipient not found -', recipientPhone);
       return res.status(404).json({ error: 'Recipient not found' });
     }
-    
     const recipientUserId = recipient[0].id;
     if (senderId === recipientUserId) {
       await connection.rollback();
       return res.status(400).json({ error: 'Cannot transfer to yourself' });
     }
-    
     const [senderWallet] = await connection.execute(
       'SELECT balance, status FROM wallets WHERE user_id = ? FOR UPDATE', 
       [senderId]
     );
-    
     if (senderWallet.length === 0) {
       await connection.rollback();
       return res.status(404).json({ error: 'Sender wallet not found' });
@@ -297,7 +309,6 @@ app.post('/api/wallet/transfer', auth, async (req, res) => {
       console.log('✗ Transfer failed: Insufficient balance -', senderId);
       return res.status(400).json({ error: 'Insufficient balance' });
     }
-    
     let [recipientWallet] = await connection.execute(
       'SELECT id FROM wallets WHERE user_id = ?', 
       [recipientUserId]
@@ -308,7 +319,6 @@ app.post('/api/wallet/transfer', auth, async (req, res) => {
         [recipientUserId, 0]
       );
     }
-    
     await connection.execute(
       'UPDATE wallets SET balance = balance - ?, updated_at = NOW() WHERE user_id = ?', 
       [amount, senderId]
@@ -317,28 +327,25 @@ app.post('/api/wallet/transfer', auth, async (req, res) => {
       'UPDATE wallets SET balance = balance + ?, updated_at = NOW() WHERE user_id = ?', 
       [amount, recipientUserId]
     );
-    
     const reference = generateReference();
-    await connection.execute(
+    const [txResult] = await connection.execute(
       'INSERT INTO transactions (from_user_id, to_user_id, amount, type, status, reference, description) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [senderId, recipientUserId, amount, 'transfer', 'completed', reference, `Transfer to ${recipient[0].name}`]
     );
-    
     await connection.commit();
-    
     const [sender] = await connection.execute(
       'SELECT name FROM wallet_users WHERE id = ?', 
       [senderId]
     );
-    
     console.log(`✓ Transfer successful: ${sender[0].name} → ${recipient[0].name} - ₱${amount.toLocaleString()}`);
     res.json({ 
       success: true,
       message: 'Transfer successful',
       transaction: {
+        id: txResult.insertId,
         reference,
         type: 'sent',
-        amount,
+        amount: parseFloat(amount),
         currency: 'PHP',
         from: sender[0].name,
         to: recipient[0].name,
@@ -349,33 +356,12 @@ app.post('/api/wallet/transfer', auth, async (req, res) => {
   } catch (e) {
     await connection.rollback();
     console.error('✗ Transfer error:', e.message);
+    console.error('Stack:', e.stack);
     res.status(500).json({ error: 'Transfer failed', details: e.message });
   } finally {
     connection.release();
   }
 });
-
-app.get('/api/wallet/search', auth, async (req, res) => {
-  try {
-    const { q } = req.query;
-    const userId = req.user.id;
-    if (!q || q.trim().length < 2) {
-      return res.json({ users: [] });
-    }
-    const db = getDB();
-    const searchTerm = `%${q}%`;
-    const [users] = await db.execute(
-      'SELECT id, name, phone FROM wallet_users WHERE (name LIKE ? OR phone LIKE ?) AND id != ? AND status = ? LIMIT 10',
-      [searchTerm, searchTerm, userId, 'active']
-    );
-    console.log(`✓ User search: "${q}" - ${users.length} results`);
-    res.json({ users });
-  } catch (e) {
-    console.error('✗ Search error:', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
 app.listen(PORT, '0.0.0.0', () => {
   const localIP = getLocalIP();
   console.log('\n💰 Wallet System Ready');
