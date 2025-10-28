@@ -88,7 +88,7 @@ app.post('/api/register', async (req, res) => {
 
 app.post('/api/login', async (req, res) => {
   try {
-    const { phone, password } = req.body;
+    const { phone, pin } = req.body;
     const db = getDB();
     const [rows] = await db.execute('SELECT * FROM wallet_users WHERE phone = ? AND status = ?', [phone, 'active']);
     
@@ -98,7 +98,7 @@ app.post('/api/login', async (req, res) => {
     }
     
     const user = rows[0];
-    const valid = await bcrypt.compare(password, user.pin);
+    const valid = await bcrypt.compare(pin, user.pin);
     
     if (!valid) {
       console.log('✗ Login failed: Invalid PIN -', phone);
