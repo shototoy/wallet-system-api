@@ -157,9 +157,7 @@ app.get('/api/wallet/transactions', auth, async (req, res) => {
       SELECT 
         t.*,
         u1.name as from_name,
-        u1.username as from_username,
-        u2.name as to_name,
-        u2.username as to_username
+        u2.name as to_name
       FROM transactions t
       LEFT JOIN wallet_users u1 ON t.from_user_id = u1.id
       LEFT JOIN wallet_users u2 ON t.to_user_id = u2.id
@@ -173,9 +171,7 @@ app.get('/api/wallet/transactions', auth, async (req, res) => {
       amount: parseFloat(tx.amount),
       currency: 'PHP',
       from: tx.from_name || 'System',
-      from_username: tx.from_username || '',
       to: tx.to_name || 'System',
-      to_username: tx.to_username || '',
       description: tx.description || (tx.from_user_id === userId ? `Sent to ${tx.to_name}` : `Received from ${tx.from_name}`),
       status: tx.status,
       reference: tx.reference,
@@ -198,9 +194,7 @@ app.get('/api/wallet/transactions/:id', auth, async (req, res) => {
       SELECT 
         t.*,
         u1.name as from_name,
-        u1.username as from_username,
-        u2.name as to_name,
-        u2.username as to_username
+        u2.name as to_name
       FROM transactions t
       LEFT JOIN wallet_users u1 ON t.from_user_id = u1.id
       LEFT JOIN wallet_users u2 ON t.to_user_id = u2.id
@@ -216,9 +210,7 @@ app.get('/api/wallet/transactions/:id', auth, async (req, res) => {
       amount: parseFloat(tx.amount),
       currency: 'PHP',
       from: tx.from_name || 'System',
-      from_username: tx.from_username || '',
       to: tx.to_name || 'System',
-      to_username: tx.to_username || '',
       description: tx.description,
       status: tx.status,
       reference: tx.reference,
@@ -244,7 +236,7 @@ app.post('/api/wallet/transfer', auth, async (req, res) => {
       return res.status(400).json({ error: 'Amount must be greater than 0' });
     }
     await connection.beginTransaction();
-    const [recipient] = await connection.execute('SELECT id, name, username FROM wallet_users WHERE username = ? AND status = ?', [recipientUsername, 'active']);
+    const [recipient] = await connection.execute('SELECT id, name FROM wallet_users WHERE phone = ? AND status = ?', [recipientUsername, 'active']);
     if (recipient.length === 0) {
       await connection.rollback();
       console.log('✗ Transfer failed: Recipient not found -', recipientUsername);
@@ -293,7 +285,6 @@ app.post('/api/wallet/transfer', auth, async (req, res) => {
         currency: 'PHP',
         from: sender[0].name,
         to: recipient[0].name,
-        to_username: recipient[0].username,
         status: 'completed',
         created_at: new Date().toISOString()
       }
