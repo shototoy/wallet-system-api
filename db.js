@@ -21,6 +21,7 @@ export async function initDB() {
     console.log('✓ MySQL connected to Railway');
     console.log(`  Host: ${config.host}:${config.port}`);
     console.log(`  Database: ${config.database}`);
+    await dropWalletTables(connection);
     await createWalletTables(connection);
     connection.release();
     return pool;
@@ -48,19 +49,16 @@ async function createWalletTables(connection) {
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS wallet_users (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        employee_id VARCHAR(11) UNIQUE NOT NULL,
+        phone VARCHAR(50) UNIQUE NOT NULL,
         pin VARCHAR(255) NOT NULL,
         name VARCHAR(255) NOT NULL,
-        phone VARCHAR(50),
-        staff_id VARCHAR(50) DEFAULT NULL,
         status ENUM('active', 'inactive', 'suspended') DEFAULT 'active',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         last_login TIMESTAMP NULL,
-        INDEX idx_employee_id (employee_id),
-        INDEX idx_staff_id (staff_id),
+        INDEX idx_phone (phone),
         INDEX idx_status (status)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
     `);
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS wallets (
