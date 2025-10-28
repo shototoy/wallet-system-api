@@ -5,6 +5,7 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
+    "setup": "echo 'No setup needed for wallet'",
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
