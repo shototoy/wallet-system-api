@@ -21,7 +21,6 @@ export async function initDB() {
     console.log('✓ MySQL connected to Railway');
     console.log(`  Host: ${config.host}:${config.port}`);
     console.log(`  Database: ${config.database}`);
-    await dropWalletTables(connection);
     await createWalletTables(connection);
     connection.release();
     return pool;
