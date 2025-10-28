@@ -224,30 +224,66 @@ app.get('/api/wallet/transactions/:id', auth, async (req, res) => {
   }
 });
 
+app.get('/api/wallet/search', auth, async (req, res) => {
+  try {
+    const { q } = req.query;
+    const userId = req.user.id;
+    if (!q || q.trim().length < 2) {
+      return res.json({ users: [] });
+    }
+    const db = getDB();
+    const searchTerm = `%${q}%`;
+    // Fixed: Removed 'username' column since it doesn't exist in the schema
+    const [users] = await db.execute(
+      'SELECT id, name, phone FROM wallet_users WHERE (name LIKE ? OR phone LIKE ?) AND id != ? AND status = ? LIMIT 10',
+      [searchTerm, searchTerm, userId, 'active']
+    );
+    console.log(`✓ User search: "${q}" - ${users.length} results`);
+    res.json({ users });
+  } catch (e) {
+    console.error('✗ Search error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/wallet/transfer', auth, async (req, res) => {
   const connection = await getDB().getConnection();
   try {
-    const { recipientUsername, amount, pin } = req.body;
+    const { recipientId, recipientUsername, amount, pin } = req.body;
+    const recipientPhone = recipientId || recipientUsername;
     const senderId = req.user.id;
-    if (!recipientUsername || !amount) {
-      return res.status(400).json({ error: 'Recipient username and amount are required' });
+    
+    if (!recipientPhone || !amount) {
+      return res.status(400).json({ error: 'Recipient and amount are required' });
     }
     if (amount <= 0) {
       return res.status(400).json({ error: 'Amount must be greater than 0' });
     }
+    
     await connection.beginTransaction();
-    const [recipient] = await connection.execute('SELECT id, name FROM wallet_users WHERE phone = ? AND status = ?', [recipientUsername, 'active']);
+    
+    const [recipient] = await connection.execute(
+      'SELECT id, name FROM wallet_users WHERE phone = ? AND status = ?', 
+      [recipientPhone, 'active']
+    );
+    
     if (recipient.length === 0) {
       await connection.rollback();
-      console.log('✗ Transfer failed: Recipient not found -', recipientUsername);
+      console.log('✗ Transfer failed: Recipient not found -', recipientPhone);
       return res.status(404).json({ error: 'Recipient not found' });
     }
-    const recipientId = recipient[0].id;
-    if (senderId === recipientId) {
+    
+    const recipientUserId = recipient[0].id;
+    if (senderId === recipientUserId) {
       await connection.rollback();
       return res.status(400).json({ error: 'Cannot transfer to yourself' });
     }
-    const [senderWallet] = await connection.execute('SELECT balance, status FROM wallets WHERE user_id = ? FOR UPDATE', [senderId]);
+    
+    const [senderWallet] = await connection.execute(
+      'SELECT balance, status FROM wallets WHERE user_id = ? FOR UPDATE', 
+      [senderId]
+    );
+    
     if (senderWallet.length === 0) {
       await connection.rollback();
       return res.status(404).json({ error: 'Sender wallet not found' });
@@ -261,19 +297,40 @@ app.post('/api/wallet/transfer', auth, async (req, res) => {
       console.log('✗ Transfer failed: Insufficient balance -', senderId);
       return res.status(400).json({ error: 'Insufficient balance' });
     }
-    let [recipientWallet] = await connection.execute('SELECT id FROM wallets WHERE user_id = ?', [recipientId]);
+    
+    let [recipientWallet] = await connection.execute(
+      'SELECT id FROM wallets WHERE user_id = ?', 
+      [recipientUserId]
+    );
     if (recipientWallet.length === 0) {
-      await connection.execute('INSERT INTO wallets (user_id, balance) VALUES (?, ?)', [recipientId, 0]);
+      await connection.execute(
+        'INSERT INTO wallets (user_id, balance) VALUES (?, ?)', 
+        [recipientUserId, 0]
+      );
     }
-    await connection.execute('UPDATE wallets SET balance = balance - ?, updated_at = NOW() WHERE user_id = ?', [amount, senderId]);
-    await connection.execute('UPDATE wallets SET balance = balance + ?, updated_at = NOW() WHERE user_id = ?', [amount, recipientId]);
+    
+    await connection.execute(
+      'UPDATE wallets SET balance = balance - ?, updated_at = NOW() WHERE user_id = ?', 
+      [amount, senderId]
+    );
+    await connection.execute(
+      'UPDATE wallets SET balance = balance + ?, updated_at = NOW() WHERE user_id = ?', 
+      [amount, recipientUserId]
+    );
+    
     const reference = generateReference();
     await connection.execute(
       'INSERT INTO transactions (from_user_id, to_user_id, amount, type, status, reference, description) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [senderId, recipientId, amount, 'transfer', 'completed', reference, `Transfer to ${recipient[0].name}`]
+      [senderId, recipientUserId, amount, 'transfer', 'completed', reference, `Transfer to ${recipient[0].name}`]
     );
+    
     await connection.commit();
-    const [sender] = await connection.execute('SELECT name FROM wallet_users WHERE id = ?', [senderId]);
+    
+    const [sender] = await connection.execute(
+      'SELECT name FROM wallet_users WHERE id = ?', 
+      [senderId]
+    );
+    
     console.log(`✓ Transfer successful: ${sender[0].name} → ${recipient[0].name} - ₱${amount.toLocaleString()}`);
     res.json({ 
       success: true,
