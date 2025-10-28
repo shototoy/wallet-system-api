@@ -49,25 +49,36 @@ app.get('/health', (req, res) => {
 
 app.post('/api/register', async (req, res) => {
   try {
-    const { username, password, name, phone, email, staff_id } = req.body;
-    if (!username || !password || !name) {
-      return res.status(400).json({ error: 'Username, password, and name are required' });
+    const { name, phone, pin } = req.body;
+    
+    if (!name || !phone || !pin) {
+      return res.status(400).json({ error: 'Name, phone, and PIN are required' });
     }
-    if (username.length !== 11 || !/^\d{11}$/.test(username)) {
-      return res.status(400).json({ error: 'Username must be 11 digits' });
+    
+    if (phone.length !== 11 || !/^\d{11}$/.test(phone)) {
+      return res.status(400).json({ error: 'Phone must be 11 digits' });
     }
+    
+    if (pin.length !== 6 || !/^\d{6}$/.test(pin)) {
+      return res.status(400).json({ error: 'PIN must be 6 digits' });
+    }
+    
     const db = getDB();
-    const [existing] = await db.execute('SELECT id FROM wallet_users WHERE username = ?', [username]);
+    const [existing] = await db.execute('SELECT id FROM wallet_users WHERE phone = ?', [phone]);
+    
     if (existing.length > 0) {
-      return res.status(400).json({ error: 'Username already exists' });
+      return res.status(400).json({ error: 'Phone number already exists' });
     }
-    const hash = await bcrypt.hash(password, 10);
+    
+    const hash = await bcrypt.hash(pin, 10);
     const [result] = await db.execute(
-      'INSERT INTO wallet_users (username, password, name, phone, email, staff_id) VALUES (?, ?, ?, ?, ?, ?)',
-      [username, hash, name, phone, email, staff_id]
+      'INSERT INTO wallet_users (phone, pin, name, status) VALUES (?, ?, ?, ?)',
+      [phone, hash, name, 'active']
     );
+    
     await db.execute('INSERT INTO wallets (user_id, balance) VALUES (?, ?)', [result.insertId, 0.00]);
-    console.log(`✓ New user registered: ${username} - ${name}`);
+    
+    console.log(`✓ New user registered: ${phone} - ${name}`);
     res.json({ success: true, message: 'Registration successful' });
   } catch (e) {
     console.error('✗ Registration error:', e.message);
@@ -77,36 +88,39 @@ app.post('/api/register', async (req, res) => {
 
 app.post('/api/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { phone, password } = req.body;
     const db = getDB();
-    const [rows] = await db.execute('SELECT * FROM wallet_users WHERE username = ? AND status = ?', [username, 'active']);
+    const [rows] = await db.execute('SELECT * FROM wallet_users WHERE phone = ? AND status = ?', [phone, 'active']);
+    
     if (rows.length === 0) {
-      console.log('✗ Login failed: Username not found -', username);
+      console.log('✗ Login failed: Phone not found -', phone);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
+    
     const user = rows[0];
-    const valid = await bcrypt.compare(password, user.password);
+    const valid = await bcrypt.compare(password, user.pin);
+    
     if (!valid) {
-      console.log('✗ Login failed: Invalid password -', username);
+      console.log('✗ Login failed: Invalid PIN -', phone);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
+    
     let [wallet] = await db.execute('SELECT * FROM wallets WHERE user_id = ?', [user.id]);
     if (wallet.length === 0) {
       await db.execute('INSERT INTO wallets (user_id, balance) VALUES (?, ?)', [user.id, 0.00]);
       console.log(`✓ Wallet created for ${user.name}`);
     }
+    
     await db.execute('UPDATE wallet_users SET last_login = NOW() WHERE id = ?', [user.id]);
-    const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '24h' });
-    console.log(`✓ Login successful: ${username} - ${user.name}`);
+    const token = jwt.sign({ id: user.id, phone: user.phone }, JWT_SECRET, { expiresIn: '24h' });
+    
+    console.log(`✓ Login successful: ${phone} - ${user.name}`);
     res.json({ 
       token, 
       user: { 
         id: user.id, 
         name: user.name, 
-        username: user.username,
-        phone: user.phone,
-        email: user.email,
-        staff_id: user.staff_id
+        phone: user.phone
       } 
     });
   } catch (e) {
