@@ -2,6 +2,7 @@
   "name": "wallet-backend",
   "version": "1.0.0",
   "description": "IntraCompany Wallet Backend API",
+  "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -12,7 +13,8 @@
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "bcrypt": "^5.1.1",
-    "jsonwebtoken": "^9.0.2"
+    "jsonwebtoken": "^9.0.2",
+    "mysql2": "^3.6.5"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

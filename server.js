@@ -6,7 +6,7 @@ import jwt from 'jsonwebtoken';
 import os from 'os';
 
 const app = express();
-const JWT_SECRET = process.env.JWT_SECRET || 'wallet-system-secret-2024';
+const JWT_SECRET = process.env.JWT_SECRET;
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
