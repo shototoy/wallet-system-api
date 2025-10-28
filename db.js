@@ -97,17 +97,6 @@ async function createWalletTables(connection) {
         INDEX idx_status (status)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     `);
-    await connection.execute(`
-      CREATE TABLE IF NOT EXISTS transaction_fees (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        transaction_id INT NOT NULL,
-        fee_amount DECIMAL(12,2) NOT NULL,
-        fee_type ENUM('transfer', 'cashout', 'payment') NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE CASCADE,
-        INDEX idx_transaction_id (transaction_id)
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
-    `);
     console.log('✓ Wallet tables verified/created');
   } catch (error) {
     console.error('✗ Error creating wallet tables:', error.message);
