@@ -21,25 +21,11 @@ export async function initDB() {
     console.log('✓ MySQL connected to Railway');
     console.log(`  Host: ${config.host}:${config.port}`);
     console.log(`  Database: ${config.database}`);
-    await dropWalletTables(connection);
     await createWalletTables(connection);
     connection.release();
     return pool;
   } catch (error) {
     console.error('✗ MySQL connection failed:', error.message);
-    throw error;
-  }
-}
-
-async function dropWalletTables(connection) {
-  try {
-    await connection.execute(`DROP TABLE IF EXISTS transaction_fees`);
-    await connection.execute(`DROP TABLE IF EXISTS transactions`);
-    await connection.execute(`DROP TABLE IF EXISTS wallets`);
-    await connection.execute(`DROP TABLE IF EXISTS wallet_users`);
-    console.log('✓ Wallet tables dropped');
-  } catch (error) {
-    console.error('✗ Error dropping wallet tables:', error.message);
     throw error;
   }
 }
