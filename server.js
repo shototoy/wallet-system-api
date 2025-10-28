@@ -308,7 +308,7 @@ app.get('/api/wallet/search', auth, async (req, res) => {
     const db = getDB();
     const searchTerm = `%${q}%`;
     const [users] = await db.execute(
-      'SELECT id, username, name, phone FROM wallet_users WHERE (name LIKE ? OR username LIKE ?) AND id != ? AND status = ? LIMIT 10',
+      'SELECT id, name, phone FROM wallet_users WHERE (name LIKE ? OR phone LIKE ?) AND id != ? AND status = ? LIMIT 10',
       [searchTerm, searchTerm, userId, 'active']
     );
     console.log(`✓ User search: "${q}" - ${users.length} results`);
