@@ -31,8 +31,8 @@ export async function initDB() {
 }
 
 async function createWalletTables(connection) {
-  try {
-    await connection.execute(`
+      try {
+        await connection.execute(`
       CREATE TABLE IF NOT EXISTS wallets (
         id INT PRIMARY KEY AUTO_INCREMENT,
         staff_id VARCHAR(50) UNIQUE NOT NULL,
@@ -44,6 +44,7 @@ async function createWalletTables(connection) {
         INDEX idx_staff_id (staff_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS transactions (
         id INT PRIMARY KEY AUTO_INCREMENT,
@@ -63,6 +64,7 @@ async function createWalletTables(connection) {
         INDEX idx_reference (reference)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+
     console.log('✓ Wallet tables verified/created');
   } catch (error) {
     console.error('✗ Error creating wallet tables:', error.message);
